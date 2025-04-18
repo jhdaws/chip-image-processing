@@ -6,8 +6,8 @@ from PIL import Image
 # Define paths
 input_folder = "./image_in"
 output_folder = "./image_out"
-checkpoint_path = "./model/sam_vit_b_01ec64.pth"  # Path to the vit_b checkpoint
-model_type = "vit_b"  # Use the smallest and fastest model
+checkpoint_path = "./model/sam_vit_b_01ec64.pth"
+model_type = "vit_b"
 
 # Ensure output folder exists
 os.makedirs(output_folder, exist_ok=True)
@@ -17,11 +17,11 @@ print("Loading SAM model...")
 sam = sam_model_registry[model_type](checkpoint=checkpoint_path)
 mask_generator = SamAutomaticMaskGenerator(
     sam,
-    points_per_side=16,  # Fewer points for faster processing
-    pred_iou_thresh=0.88,  # Filter low-quality masks
-    stability_score_thresh=0.92,  # Filter unstable masks
-    crop_n_layers=0,  # Disable crop layers
-    min_mask_region_area=100,  # Filter small masks
+    points_per_side=16,
+    pred_iou_thresh=0.88,
+    stability_score_thresh=0.92,
+    crop_n_layers=0,
+    min_mask_region_area=100,
 )
 print("Model loaded successfully.")
 
@@ -35,27 +35,23 @@ if not os.path.exists(image_path):
 else:
     print(f"Processing image: {image_name}")
     image = Image.open(image_path).convert("RGB")
-    image = image.resize((512, 512))  # Resize to reduce memory usage
+    image = image.resize((512, 512))  # Uniform size for consistent processing
     image_np = np.array(image)
 
-    # Generate masks for the entire image
+    # Generate masks
     print("Generating masks...")
     masks = mask_generator.generate(image_np)
     print(f"Generated {len(masks)} masks.")
 
-    # Create a color mask (RGB)
-    color_mask = np.zeros_like(image_np)  # Initialize an empty RGB mask
+    # Create binary mask (single channel)
+    binary_mask = np.zeros(image_np.shape[:2], dtype=np.uint8)  # Black background
     for mask in masks:
-        # Assign a random color to each mask
-        color = np.random.randint(0, 256, size=(3,))  # Random RGB color
-        color_mask[mask["segmentation"]] = color  # Apply the color to the mask
+        binary_mask[mask["segmentation"]] = 255  # White for poker chips
 
-    # Convert the color mask to an image
-    color_mask_image = Image.fromarray(color_mask.astype(np.uint8))
-
-    # Save the segmented image
+    # Save as grayscale image
+    output_image = Image.fromarray(binary_mask, mode='L')  # 'L' for 8-bit grayscale
     output_path = os.path.join(output_folder, f"segmented_{image_name}")
-    color_mask_image.save(output_path)
-    print(f"Saved segmented image to: {output_path}")
+    output_image.save(output_path)
+    print(f"Saved binary mask to: {output_path}")
 
-print("Image processing completed.")
+print("Processing completed.")

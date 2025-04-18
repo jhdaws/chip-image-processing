@@ -9,7 +9,7 @@ MASK_DIR = "./image_out"
 OUT_DIR = "./analysis_results"
 os.makedirs(OUT_DIR, exist_ok=True)
 
-# Reference BGR values
+# Updated reference BGR centroids (from 3 image samples)
 REF_BGR = {
     "red":   (45.0, 55.0, 100.0),
     "blue":  (60.0, 57.0, 64.0),
@@ -27,18 +27,6 @@ def match_color(avg_bgr):
             closest_color = color
     return closest_color
 
-def detect_top_chip_diameter(roi):
-    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-    gray = cv2.medianBlur(gray, 5)
-    circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, dp=1.2,
-                               minDist=20, param1=50, param2=30,
-                               minRadius=10, maxRadius=60)
-    if circles is not None:
-        circles = np.round(circles[0, :]).astype("int")
-        radii = [r for (_, _, r) in circles]
-        return max(radii) * 2  # Diameter
-    return None
-
 def analyze_stack(img, mask):
     ys, xs = np.where(mask)
     y0, y1 = ys.min(), ys.max()
@@ -46,25 +34,14 @@ def analyze_stack(img, mask):
     roi = img[y0:y1+1, x0:x1+1]
     mask_roi = mask[y0:y1+1, x0:x1+1]
 
-    # Estimate color
+    # Compute average BGR over masked region
     masked_pixels = roi[mask_roi]
     avg_bgr = np.mean(masked_pixels, axis=0)
     color_name = match_color(avg_bgr)
-
-    # Estimate chip diameter
-    top_diameter = detect_top_chip_diameter(roi)
-    if top_diameter is None:
-        return 1, color_name, (x0, y0, x1, y1)
-
-    EMPIRICAL_RATIO = 0.97  # stack_height = count * diameter * ratio
-    est_chip_height = top_diameter * EMPIRICAL_RATIO
-    stack_height = y1 - y0
-    est_count = int(round(stack_height / est_chip_height))
-
-    return max(1, est_count), color_name, (x0, y0, x1, y1)
+    return color_name, (x0, y0, x1, y1)
 
 def main():
-    print("=== CHIP COUNTER (Top Chip Diameter Method) ===")
+    print("=== STACK COLOR IDENTIFIER ===")
     image_name = input("Image filename (in ./image_in): ").strip()
     img_path = os.path.join(IMG_DIR, image_name)
     mask_path = os.path.join(MASK_DIR, f"segmented_{image_name}")
@@ -86,22 +63,22 @@ def main():
         temp_mask = np.zeros_like(mask, dtype=np.uint8)
         cv2.drawContours(temp_mask, [cnt], -1, 255, -1)
         temp_mask = temp_mask.astype(bool)
-        count, color, (x0, y0, x1, y1) = analyze_stack(img, temp_mask)
-        summary[color] = summary.get(color, 0) + count
+        color_name, (x0, y0, x1, y1) = analyze_stack(img, temp_mask)
+        summary[(x0, y0)] = color_name
         cv2.rectangle(annotated, (x0, y0), (x1, y1), (0, 255, 0), 2)
-        cv2.putText(annotated, f"{color}:{count}", (x0, y0 - 10),
+        cv2.putText(annotated, color_name, (x0, y0 - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
 
-    print("\n=== RESULTS ===")
-    for color, count in summary.items():
-        print(f"{color:>6}: {count} chips")
+    print("\n=== STACK COLORS ===")
+    for pos, color in summary.items():
+        print(f"Stack @ {pos}: {color}")
 
-    out_path = os.path.join(OUT_DIR, f"analyzed_{image_name}")
+    out_path = os.path.join(OUT_DIR, f"color_tagged_{image_name}")
     cv2.imwrite(out_path, annotated)
     plt.figure(figsize=(12, 6))
     plt.imshow(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB))
     plt.axis("off")
-    plt.title("Chip Count via Diameter Estimation")
+    plt.title("Identified Stack Colors")
     plt.show()
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ import os
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.signal import find_peaks
 
 # Directories
 IMG_DIR = "./image_in"
@@ -27,17 +28,25 @@ def match_color(avg_bgr):
             closest_color = color
     return closest_color
 
-def detect_top_chip_diameter(roi):
-    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-    gray = cv2.medianBlur(gray, 5)
-    circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, dp=1.2,
-                               minDist=20, param1=50, param2=30,
-                               minRadius=10, maxRadius=60)
-    if circles is not None:
-        circles = np.round(circles[0, :]).astype("int")
-        radii = [r for (_, _, r) in circles]
-        return max(radii) * 2  # Diameter
-    return None
+def count_bands_by_color(roi, color):
+    lab = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB)
+    L, a, b = cv2.split(lab)
+
+    # Mask for bands (white or blue depending on chip)
+    if color == "white":
+        # Detect blue bands on white chips
+        band_mask = (b > 130) & (a < 140)
+    else:
+        # Detect white bands on non-white chips
+        band_mask = (L > 180) & (a > 120) & (b > 120)
+
+    band_img = np.zeros_like(L, dtype=np.uint8)
+    band_img[band_mask] = 255
+
+    vertical_profile = band_img.sum(axis=1)
+    peaks, _ = find_peaks(vertical_profile, distance=10, prominence=300)
+
+    return max(1, len(peaks))
 
 def analyze_stack(img, mask):
     ys, xs = np.where(mask)
@@ -46,25 +55,15 @@ def analyze_stack(img, mask):
     roi = img[y0:y1+1, x0:x1+1]
     mask_roi = mask[y0:y1+1, x0:x1+1]
 
-    # Estimate color
     masked_pixels = roi[mask_roi]
     avg_bgr = np.mean(masked_pixels, axis=0)
-    color_name = match_color(avg_bgr)
+    color = match_color(avg_bgr)
 
-    # Estimate chip diameter
-    top_diameter = detect_top_chip_diameter(roi)
-    if top_diameter is None:
-        return 1, color_name, (x0, y0, x1, y1)
-
-    EMPIRICAL_RATIO = 0.97  # stack_height = count * diameter * ratio
-    est_chip_height = top_diameter * EMPIRICAL_RATIO
-    stack_height = y1 - y0
-    est_count = int(round(stack_height / est_chip_height))
-
-    return max(1, est_count), color_name, (x0, y0, x1, y1)
+    count = count_bands_by_color(roi, color)
+    return count, color, (x0, y0, x1, y1)
 
 def main():
-    print("=== CHIP COUNTER (Top Chip Diameter Method) ===")
+    print("=== CHIP COUNTER (Color Band Method) ===")
     image_name = input("Image filename (in ./image_in): ").strip()
     img_path = os.path.join(IMG_DIR, image_name)
     mask_path = os.path.join(MASK_DIR, f"segmented_{image_name}")
@@ -101,7 +100,7 @@ def main():
     plt.figure(figsize=(12, 6))
     plt.imshow(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB))
     plt.axis("off")
-    plt.title("Chip Count via Diameter Estimation")
+    plt.title("Chip Count via Band Detection")
     plt.show()
 
 if __name__ == "__main__":

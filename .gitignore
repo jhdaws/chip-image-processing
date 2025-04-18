@@ -1,3 +1,7 @@
-model
 image_in
+image_in_old
 image_out
+image_out_old
+model
+analysis_results
+.venv
